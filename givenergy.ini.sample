@@ -1,0 +1,25 @@
+# GivEnergy API settings
+api_key = "your_givenergy_api_key_here"
+inverter_serial = "your_inverter_serial_here"
+
+# Octopus Energy API settings
+octopus_api_key = "your_octopus_api_key_here"
+octopus_electric_import_mpan = "your_import_mpan_here"
+octopus_electric_import_serial = "your_import_serial_here"
+
+octopus_electric_export_mpan = "your_export_mpan_here"
+octopus_electric_export_serial = "your_export_serial_here"
+
+octopus_gas_mprn = "your_gas_mprn_here"
+octopus_gas_serial = "your_gas_serial_here"
+
+# Database settings
+db_host = "localhost"
+db_port = 3306
+db_name = "solar"
+db_user = "solar_user"
+db_pass = "your_database_password_here"
+
+# API settings
+request_delay_ms = 300
+max_retries = 5

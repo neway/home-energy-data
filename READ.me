@@ -1,0 +1,30 @@
+A few sample SQL queires:
+
+For further docs - see  https://www.newaytech.co.uk/home-energy-data-self-hosted
+
+-- Truncate all GivEnergy and Octopus tables
+-- WARNING: This will DELETE ALL DATA from all tables!
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+TRUNCATE TABLE givenergy_datapoints;
+TRUNCATE TABLE givenergy_import_runs;
+TRUNCATE TABLE givenergy_daily_summary;
+TRUNCATE TABLE givenergy_energy_flows;
+TRUNCATE TABLE octopus_consumption;
+TRUNCATE TABLE octopus_daily_summary;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- Verify all tables are empty
+SELECT 'givenergy_datapoints' AS table_name, COUNT(*) AS row_count FROM givenergy_datapoints
+UNION ALL
+SELECT 'givenergy_import_runs', COUNT(*) FROM givenergy_import_runs
+UNION ALL
+SELECT 'givenergy_daily_summary', COUNT(*) FROM givenergy_daily_summary
+UNION ALL
+SELECT 'givenergy_energy_flows', COUNT(*) FROM givenergy_energy_flows
+UNION ALL
+SELECT 'octopus_consumption', COUNT(*) FROM octopus_consumption
+UNION ALL
+SELECT 'octopus_daily_summary', COUNT(*) FROM octopus_daily_summary;
