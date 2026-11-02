@@ -43,3 +43,25 @@ const GAS_KWH_PER_M3 = 11.2;
 // SEG pays only for solar export. The MCS estimate of yearly generation (on your installer's quote) is the
 // yardstick for how close export gets to looking like more than the panels made.
 const MCS_ESTIMATE_KWH = 4000.0;
+
+// Shelly devices by role, by hardware id (shelly_devices.device_id, after shelly_import.php has run), so renaming
+// them in the app changes nothing. '' leaves the garage section out.
+const SHELLY_OUTSIDE_SENSOR = '';
+const SHELLY_GARAGE_SENSOR = '';
+const SHELLY_GARAGE_DEHUMIDIFIER = '';
+
+// Changes to the house, marked against their month in the report: [date, what].
+const HOME_CHANGES = [
+    // ['2025-04-14', 'garage wall tanked'],
+];
+
+// Where the weather comes from (Open-Meteo, weather_import.php): your town is close enough.
+const WEATHER_LATITUDE = 51.5;
+const WEATHER_LONGITUDE = -0.13;
+
+// A heat pump to compare with the heating it replaced: its Shelly meter [device id, channel], when it went in, the
+// meters on the old heating [device id, channel, what], and a temperature sensor in the room. '' / [] leaves it out.
+const OFFICE_HEAT_PUMP = ['', 0];
+const OFFICE_HEAT_PUMP_FROM = '';
+const OFFICE_HEATING_BEFORE = [];
+const OFFICE_SENSOR = '';

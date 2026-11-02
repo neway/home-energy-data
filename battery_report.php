@@ -13,6 +13,9 @@ declare(strict_types=1);
 // Your tariff, system, costs and thresholds: copy config.sample.php there and set them (INSTALL.md).
 require_once __DIR__ . '/../home_energy_private/config.php';
 
+// Degree days: how far each day's mean outside temperature fell below this, added up (the UK's usual base).
+const DEGREE_DAY_BASE_C = 15.5;
+
 // One-way efficiency of a battery (charge or discharge); round trip is this squared.
 const BATTERY_EFFICIENCY = 0.95;
 
@@ -26,6 +29,7 @@ require_once __DIR__ . '/src/Database.php';
 require_once __DIR__ . '/src/BatteryCapacity.php';
 require_once __DIR__ . '/src/BatteryEconomics.php';
 require_once __DIR__ . '/src/Billing.php';
+require_once __DIR__ . '/src/ShellyData.php';
 
 main($argv);
 
@@ -70,6 +74,10 @@ function main(array $argv): void {
         carSection($car),
         billsSection($billing->charges(), $billing->creditsTotal()),
         axleSection($axle, $axleYear),
+        usageSection(new ShellyData($pdo), $windows, $end, sumMonths($inverter)['home'],
+            sumMonths($economics->inverterTotals(...$windows['30 days']))['home']),
+        garageSection(new ShellyData($pdo), $yearFrom, $end),
+        ...officeHeatingSections(new ShellyData($pdo), degreeDaysByMonth($pdo), $yearFrom, $end),
         $capacitySection,
         cyclesSection($capacity, $windows['12 months']),
         monthlySection($capacity, $sampled, $inverter, $yearFrom, $end),
@@ -237,6 +245,184 @@ function axleSection(array $events, array $year): array {
 
 function orDash(?float $kwh, int $decimals = 0): string {
     return $kwh === null ? '-' : kwh($kwh, $decimals);
+}
+
+function usageSection(ShellyData $shelly, array $windows, string $end, float $home12, float $home30): array {
+    $year = $shelly->deviceUse(...$windows['12 months']);
+    $month = [];
+    foreach ($shelly->deviceUse(...$windows['30 days']) as $d) {
+        $month[$d['name']] = $d['off'] + $d['peak'];
+    }
+    $base = $shelly->baseload(...$windows['30 days']);
+    $rows = [];
+    $total12 = $total30 = $totalCost = 0.0;
+    foreach ($year as $d) {
+        $kwh = $d['off'] + $d['peak'];
+        $cost = price($d['off'], $d['peak'], 0);
+        [$total12, $total30, $totalCost] = [$total12 + $kwh, $total30 + ($month[$d['name']] ?? 0), $totalCost + $cost];
+        $rows[] = [$d['name'], $d['first'] > $windows['12 months'][0] ? $d['first'] : '', kwh($month[$d['name']] ?? 0, 1),
+            kwh($kwh), $kwh > 0 ? pct($d['peak'] / $kwh) : '', gbp($cost),
+            isset($base['devices'][$d['name']]) ? sprintf('%.0f W', $base['devices'][$d['name']]) : ''];
+    }
+    $metered = array_sum($base['devices']);
+    $rows[] = ['All metered devices', '', kwh($total30, 1), kwh($total12), '', gbp($totalCost), sprintf('%.0f W', $metered)];
+    $rows[] = ['Not metered', '', kwh($home30 - $total30, 1), kwh($home12 - $total12), '', '',
+        $base['house_w'] === null ? '' : sprintf('%.0f W', $base['house_w'] - $metered)];
+    $rows[] = ['House (GivEnergy home use)', '', kwh($home30, 1), kwh($home12), '', '',
+        $base['house_w'] === null ? '' : sprintf('%.0f W', $base['house_w'])];
+
+    $baseKwh = ($base['house_w'] ?? 0) * 8.76;
+    $blendedP = ((24 - OFF_PEAK_START_HOUR + OFF_PEAK_END_HOUR) * OFF_PEAK_P
+        + (OFF_PEAK_START_HOUR - OFF_PEAK_END_HOUR) * PEAK_P) / 24;
+    return [
+        'title' => 'Where the electricity goes',
+        'text' => [sprintf('Each Shelly-metered device, largest first, against GivEnergy\'s home use (the car is outside '
+            . 'it). Always on: the house never draws less than about %.0f W (each day\'s lowest hour, median over 30 days), '
+            . '%s kWh a year, %s of home use and about %s at an even spread of peak and off-peak rates; the metered '
+            . 'devices explain %.0f W of it.', $base['house_w'] ?? 0, kwh($baseKwh), pct($baseKwh / max($home12, 1)),
+            gbp($baseKwh * $blendedP / 100), $metered)],
+        'head' => ['Device', 'Since', '30 days kWh', '12 months kWh', 'At peak', 'Cost at grid rates', 'Always on'],
+        'rows' => $rows,
+        'notes' => ['Since: the device\'s first data in the 12 months, so its total covers less. Cost at grid rates: '
+            . 'peak hours at the peak rate, though the battery covers most of them, so the real cost is lower. '
+            . 'Always on: its lowest hour of each day, median over 30 days.'],
+    ];
+}
+
+function garageSection(ShellyData $shelly, string $from, string $end): array {
+    if (SHELLY_GARAGE_SENSOR === '') {
+        return ['title' => 'Garage humidity', 'text' => ['No garage sensor set (SHELLY_GARAGE_SENSOR in config.php).'],
+            'head' => [], 'rows' => []];
+    }
+    $changes = [];
+    foreach (HOME_CHANGES as [$date, $what]) {
+        $changes[substr($date, 0, 7)][] = "$what " . date('j M', strtotime($date));
+    }
+    $rows = [];
+    foreach ($shelly->garage(SHELLY_GARAGE_SENSOR, SHELLY_OUTSIDE_SENSOR, SHELLY_GARAGE_DEHUMIDIFIER, $from, $end) as $period => $g) {
+        $label = $period === 'Last 7 days' ? $period : date('M Y', strtotime("$period-01"));
+        if ($g === null) {
+            $rows[] = [$label, 'no data', '', '', '', '', '', '', '', '', '', '', '', ''];
+            continue;
+        }
+        $gap = $g['ai'] - $g['ae'];
+        $rows[] = [$label . (isset($changes[$period]) ? ' (' . implode(', ', $changes[$period]) . ')' : ''), $g['hours'],
+            sprintf('%.1f', $g['ti']), sprintf('%.1f', $g['te']), sprintf('%.0f%%', $g['hi']),
+            rag(pct($g['over_limit']), $g['over_limit'] < 0.1 ? 'green' : ($g['over_limit'] < 0.5 ? 'amber' : 'red')),
+            sprintf('%.2f', $g['ai']), sprintf('%.2f', $g['ae']),
+            rag(sprintf('%+.2f', $gap), $gap <= 0 ? 'green' : ($gap <= 0.3 ? 'amber' : 'red')),
+            kwh($g['dehum_off'] + $g['dehum_peak'], 1), gbp(price($g['dehum_off'], $g['dehum_peak'], 0), 2), $g['running'],
+            pct($g['drier']), $g['leak_hours'] === null ? '-' : sprintf('%.1f', $g['leak_hours'])];
+    }
+
+    return [
+        'title' => 'Garage humidity',
+        'text' => ['Inside against outside, by absolute humidity (g of water per m3), as RH falls whenever the garage is '
+            . 'warmer. Gap: inside - outside; above 0, the garage has a damp source of its own (green: none). Outside '
+            . 'drier: hours when outside held at least 0.5 g/m3 less, when a vent fan would dry the garage. Leak: hours '
+            . 'for the garage to take up 63% of a change in outside moisture; longer is tighter.'],
+        'head' => ['Period', 'Hours', 'Inside C', 'Outside C', 'Inside RH', 'Over 70% RH', 'Inside g/m3', 'Outside g/m3',
+            'Gap', 'Dehumidifier kWh', 'Cost', 'Running hours', 'Outside drier', 'Leak hours'],
+        'rows' => $rows,
+        'notes' => ['Hours: hours with both sensors. Over 70% RH: share of hours (green under 10%, red half or more). '
+            . 'Running: hours the dehumidifier used over 50 Wh. Cost at grid rates by hour.'],
+    ];
+}
+
+/** Degree days and mean outside temperature by UK month ('Y-m'), from weather_daily. */
+function degreeDaysByMonth(PDO $pdo): array {
+    $stmt = $pdo->prepare(<<<SQL
+        SELECT DATE_FORMAT(day, '%Y-%m') AS month, SUM(GREATEST(:base - mean_temperature_c, 0)) AS dd,
+               AVG(mean_temperature_c) AS t, COUNT(*) AS days
+        FROM weather_daily GROUP BY month
+        SQL);
+    $stmt->execute(['base' => DEGREE_DAY_BASE_C]);
+    $months = [];
+    foreach ($stmt as $r) {
+        $months[$r['month']] = ['dd' => (float)$r['dd'], 't' => (float)$r['t'], 'days' => (int)$r['days']];
+    }
+    return $months;
+}
+
+/** Two sections: winters before and after the heat pump, then the heat pump month by month. */
+function officeHeatingSections(ShellyData $shelly, array $weather, string $from, string $end): array {
+    [$pumpId, $pumpChannel] = OFFICE_HEAT_PUMP;
+    if ($pumpId === '') {
+        return [];
+    }
+    $first = $weather ? min(array_keys($weather)) . '-01' : $from;
+    $pump = $shelly->energyByMonth($pumpId, $pumpChannel, $first, $end);
+    $before = [];
+    foreach (OFFICE_HEATING_BEFORE as [$id, $channel]) {
+        foreach ($shelly->energyByMonth($id, $channel, $first, date('Y-m-d', strtotime(OFFICE_HEAT_PUMP_FROM . ' -1 day'))) as $m => $e) {
+            $before[$m]['off'] = ($before[$m]['off'] ?? 0) + $e['off'];
+            $before[$m]['peak'] = ($before[$m]['peak'] ?? 0) + $e['peak'];
+        }
+    }
+
+    // Each winter (Dec to Feb) with data for all three months, before and after the heat pump.
+    $winters = [];
+    foreach (array_unique(array_map(fn($m) => (int)substr($m, 0, 4), array_keys($pump + $before))) as $y) {
+        $months = ["$y-12", sprintf('%d-01', $y + 1), sprintf('%d-02', $y + 1)];
+        $source = "$y-12" < substr(OFFICE_HEAT_PUMP_FROM, 0, 7) ? $before : $pump;
+        if (array_diff($months, array_keys($source)) || array_diff($months, array_keys($weather))) {
+            continue;
+        }
+        $w = ['label' => sprintf('%d/%02d', $y, ($y + 1) % 100), 'heat_pump' => $source === $pump, 'off' => 0.0,
+            'peak' => 0.0, 'dd' => 0.0];
+        foreach ($months as $m) {
+            $w['off'] += $source[$m]['off'];
+            $w['peak'] += $source[$m]['peak'];
+            $w['dd'] += $weather[$m]['dd'];
+        }
+        $winters[] = $w;
+    }
+    $old = array_values(array_filter($winters, fn($w) => !$w['heat_pump']));
+    $rows = [];
+    foreach ($winters as $w) {
+        $kwh = $w['off'] + $w['peak'];
+        $cost = price($w['off'], $w['peak'], 0);
+        $saving = ['', ''];
+        if ($w['heat_pump'] && $old) {
+            // What the old heating would have used in this winter's weather.
+            $o = $old[count($old) - 1];
+            $scale = $w['dd'] / $o['dd'];
+            $saving = [kwh(($o['off'] + $o['peak']) * $scale - $kwh), gbp(price($o['off'], $o['peak'], 0) * $scale - $cost)];
+        }
+        $rows[] = [$w['label'], $w['heat_pump'] ? 'heat pump' : 'old heaters', kwh($kwh), kwh($w['dd']),
+            kwh(100 * $kwh / $w['dd'], 1), pct($w['peak'] / max($kwh, 1e-9)), gbp($cost), ...$saving];
+    }
+
+    $office = OFFICE_SENSOR === '' ? [] : $shelly->temperatureByMonth(OFFICE_SENSOR, $from, $end);
+    $monthly = [];
+    foreach (array_reverse($pump, true) as $m => $e) {
+        if ($m < substr($from, 0, 7)) {
+            continue;
+        }
+        $kwh = $e['off'] + $e['peak'];
+        $monthly[] = [date('M Y', strtotime("$m-01")), kwh($kwh, 1), isset($weather[$m]) ? kwh($weather[$m]['dd']) : '',
+            isset($weather[$m]) && $weather[$m]['dd'] > 0 ? kwh(100 * $kwh / $weather[$m]['dd'], 1) : '',
+            pct($e['peak'] / max($kwh, 1e-9)), gbp(price($e['off'], $e['peak'], 0)),
+            isset($office[$m]) ? sprintf('%.1f', $office[$m]) : '-', isset($weather[$m]) ? sprintf('%.1f', $weather[$m]['t']) : '-'];
+    }
+    $names = implode(' and ', array_map(fn($b) => $b[2], OFFICE_HEATING_BEFORE));
+
+    return [[
+        'title' => 'Office heating: heat pump against the heaters it replaced',
+        'text' => [sprintf('Winters (December to February) before the heat pump went in (%s), when the office was heated '
+            . 'by the %s, and since. Degree days: how cold it was (each day\'s mean outside temperature below %.1fC, '
+            . 'added up), so winters compare fairly. Saved: what the old heaters would have used in that winter\'s '
+            . 'weather, less what the heat pump used.', date('M Y', strtotime(OFFICE_HEAT_PUMP_FROM)), $names, DEGREE_DAY_BASE_C)],
+        'head' => ['Winter', 'Heating', 'kWh', 'Degree days', 'kWh per 100 degree days', 'At peak', 'Cost at grid rates',
+            'Saved kWh', 'Saved'],
+        'rows' => $rows ?: [['no complete winter yet', '', '', '', '', '', '', '', '']],
+        'notes' => ['Cost at grid rates: peak hours at the peak rate, though the battery covers most of them.'],
+    ], [
+        'title' => 'Office heat pump, month by month',
+        'head' => ['Month', 'kWh', 'Degree days', 'kWh per 100 degree days', 'At peak', 'Cost at grid rates',
+            'Office C', 'Outside C'],
+        'rows' => $monthly ?: [['no data yet', '', '', '', '', '', '', '']],
+    ]];
 }
 
 /** What EDF billed as a share of what GivEnergy measured: green within 5%. */

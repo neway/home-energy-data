@@ -96,7 +96,27 @@ It loads every PDF there into the `edf_*` tables and is safe to re-run. A bill w
 subtotals, half-hours to the billed kWh, the balance carried from the last bill) isn't loaded: the output says what
 didn't match, and the script exits 1.
 
-## 8. Your system's numbers
+## 8. Shelly devices and weather (optional)
+
+Add your Shelly Cloud server and key (Shelly app: User settings, Authorization cloud key) to the ini:
+
+```
+shelly_server = "https://shelly-XX-eu.shelly.cloud"
+shelly_auth_key = "..."
+```
+
+Then backfill once (slow: about one request a second), poll every 2 minutes, and load the weather:
+
+```
+php shelly_import.php --config=../home_energy_private/givenergy.ini --auto-catchup --from=2025-01-01
+*/2 * * * * php /path/to/home_energy_toolset/shelly_import.php --config=/path/to/home_energy_private/givenergy.ini --poll >/dev/null
+php weather_import.php --config=../home_energy_private/givenergy.ini --from=2025-01-01
+```
+
+Run `shelly_import.php --auto-catchup` and `weather_import.php` nightly with the other imports. Set the device roles
+(`SHELLY_*`, `OFFICE_*`) and `WEATHER_*` in `../home_energy_private/config.php` (see `config.sample.php`).
+
+## 9. Your system's numbers
 
 The battery report's tariff, install date, costs and rated capacity are constants in
 `../home_energy_private/config.php`. Copy `config.sample.php` there and set them to your own: the report won't run

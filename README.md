@@ -11,9 +11,7 @@ MySQL (`givenergy_import.php`), and reports on the battery's health and value (`
 ## Not yet done
 
 1. **Past tariffs.** Payback prices every past year at today's tariff; price each period at its own rates.
-2. **Smart plugs and monitors** (e.g. Shelly) on a heat pump or other big load: what it uses and when, and what it
-   does to peak import.
-3. **Axle grid events, automatically.** Payouts are entered by hand (below). Axle's householder endpoint (the one
+2. **Axle grid events, automatically.** Payouts are entered by hand (below). Axle's householder endpoint (the one
    Home Assistant uses) gives only the next or current event: `GET https://api.axle.energy/vpp/home-assistant/event`
    with `Authorization: Bearer <token>` (Axle account, Account Settings, Home Assistant, Generate Token), returning
    `start_time`, `end_time`, `import_export`, `updated_at`, `opted_out`. No history or earnings, so: poll it every
@@ -61,6 +59,41 @@ return [
 The report shows each event against GivEnergy's counters at its start and end (exported, imported, battery out,
 battery %), and the 12 months' payouts in the conclusion.
 
+## Shelly devices
+
+```
+php shelly_import.php --config=/path/to/givenergy.ini --poll                            # every 2 minutes
+php shelly_import.php --config=/path/to/givenergy.ini --auto-catchup [--from=2024-06-01] # nightly; --from backfills
+```
+
+Reads every device on a Shelly Cloud account (`shelly_server` and `shelly_auth_key` in the ini: Shelly app, User
+settings, Authorization cloud key). The cloud allows about one request a second, so a backfill takes a while (one
+request per device per day).
+
+| Table | What |
+|---|---|
+| `shelly_devices` | every device and channel: name, model, kind (power, sensor, other) |
+| `shelly_device_names` | each name a device has had, from when it was first seen with it |
+| `shelly_hourly` | the cloud's hourly history: Wh (and voltage) for power meters; min and max temperature and humidity for sensors |
+| `shelly_minutes` | Wh per minute for Gen2+ power meters, from polling: each status gives the last three complete minutes (`aenergy.by_minute`, mWh, newest first, before `minute_ts`; see the Gen2 API's Switch docs), so polls 2 minutes apart overlap and miss nothing |
+| `shelly_sensor_readings` | each sensor reading (H&T every ~10 minutes, BLU every 1-2), at the device's own time |
+
+Everything is keyed on the device's hardware id and channel, never its name, as a plug can move to another job.
+Gen1 power meters (e.g. 1PM, Dimmer 2) report minutes in an older format, so they have hourly history only. A BLU
+sensor's cloud history can stop while it still reports live, so the report fills its missing hours from the polled
+readings. Which device does what (outside sensor, garage, office heat pump, the heaters it replaced) is set by id
+in `../home_energy_private/config.php`.
+
+## Weather
+
+```
+php weather_import.php --config=/path/to/givenergy.ini [--from=2023-01-01]
+```
+
+Daily mean outside temperature from the Open-Meteo archive (free, no key) for `WEATHER_LATITUDE` and
+`WEATHER_LONGITUDE` (a town is close enough), into `weather_daily`, for degree days: each day's mean below 15.5C,
+added up, so heating in different winters compares fairly.
+
 ## Battery report
 
 ```
@@ -83,6 +116,9 @@ Sections, in order:
 | Conclusion: house electricity net (import, solar export, battery export), standing charge, car, gas, battery ceiling | 12 months | samples; standing charges and gas rate from the latest EDF bill; car and gas from meter and bills |
 | Car charging: meter import - GivEnergy import, by month | 12 months | Octopus then EDF half-hours, inverter counters |
 | Axle grid events: each payout with what was exported, imported and out of the battery, and the battery's % | every event in `axle_events.php` | inverter counters at each event's start and end |
+| Where the electricity goes: each Shelly-metered device's kWh (30 days, 12 months), share at peak, cost, and always-on draw, against GivEnergy's home use | 30 days, 12 months | `shelly_hourly`, inverter counters, samples |
+| Garage humidity: inside and outside temperature, RH and absolute humidity, the gap, hours over 70% RH, the dehumidifier's kWh, cost and running hours, hours when outside was drier, how leaky | last 7 days, then each month | garage sensors and dehumidifier meter; `HOME_CHANGES` marked |
+| Office heating: each winter (Dec-Feb) on the old heaters against the heat pump, per degree day, with the saving in that winter's weather; then the heat pump month by month with office and outside temperature | every complete winter; 12 months | `shelly_hourly`, `weather_daily` |
 | EDF bills against GivEnergy: each bill line (units, standing charge, VAT, total), with GivEnergy's import or export for the same days | every bill | `edf_charges`, inverter counters |
 | Demonstrated capacity | each of the last 7 days, 30 days, 12 months | samples (slices, below) |
 | Full 100% to 0% discharges | 12 months | discharge counter |

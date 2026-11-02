@@ -15,6 +15,8 @@ final class SchemaManager
         $this->createOctopusConsumptionTable();
         $this->createOctopusDailySummaryTable();
         $this->createEdfTables();
+        $this->createShellyTables();
+        $this->createWeatherTable();
     }
     private function createDatapointsTable(): void
     {
@@ -264,6 +266,86 @@ final class SchemaManager
             PRIMARY KEY (start_utc),
             KEY idx_local_date (local_date),
             KEY idx_bill (bill_ref)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+    }
+
+    // Shelly devices (shelly_import.php): hourly history from the cloud's statistics for power meters (Wh) and
+    // sensors (temperature, humidity), and from polling the live status, each power meter's energy per minute and
+    // each sensor's readings (about every 10 minutes). All times UTC.
+    private function createShellyTables(): void
+    {
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS shelly_devices (
+            device_id VARCHAR(32) NOT NULL,
+            channel TINYINT UNSIGNED NOT NULL,
+            name VARCHAR(128) NOT NULL,
+            model VARCHAR(32) NOT NULL,
+            kind ENUM('power', 'sensor', 'other') NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (device_id, channel)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+
+        // Data is keyed on device_id (the hardware id) and channel, never the name. A device's name (and so what it
+        // measures) can change: each name it has had, from when it was first seen with it.
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS shelly_device_names (
+            device_id VARCHAR(32) NOT NULL,
+            channel TINYINT UNSIGNED NOT NULL,
+            from_utc DATETIME NOT NULL,
+            name VARCHAR(128) NOT NULL,
+            PRIMARY KEY (device_id, channel, from_utc)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS shelly_hourly (
+            device_id VARCHAR(32) NOT NULL,
+            channel TINYINT UNSIGNED NOT NULL,
+            hour_utc DATETIME NOT NULL COMMENT 'start of the hour',
+            wh DECIMAL(12,3) NULL COMMENT 'power meters',
+            voltage DECIMAL(6,2) NULL,
+            min_temperature_c DECIMAL(5,2) NULL COMMENT 'sensors',
+            max_temperature_c DECIMAL(5,2) NULL,
+            humidity_pct DECIMAL(5,2) NULL,
+            PRIMARY KEY (device_id, channel, hour_utc),
+            KEY idx_hour (hour_utc)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS shelly_minutes (
+            device_id VARCHAR(32) NOT NULL,
+            channel TINYINT UNSIGNED NOT NULL,
+            minute_utc DATETIME NOT NULL,
+            wh DECIMAL(10,4) NOT NULL COMMENT 'x 60 = average W over the minute',
+            PRIMARY KEY (device_id, channel, minute_utc),
+            KEY idx_minute (minute_utc)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS shelly_sensor_readings (
+            device_id VARCHAR(32) NOT NULL,
+            reading_utc DATETIME NOT NULL,
+            temperature_c DECIMAL(5,2) NULL,
+            humidity_pct DECIMAL(5,2) NULL,
+            battery_pct TINYINT UNSIGNED NULL,
+            PRIMARY KEY (device_id, reading_utc),
+            KEY idx_reading (reading_utc)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+    }
+
+    // Daily mean outside temperature (weather_import.php), for degree days.
+    private function createWeatherTable(): void
+    {
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS weather_daily (
+            day DATE NOT NULL,
+            mean_temperature_c DECIMAL(5,2) NOT NULL,
+            PRIMARY KEY (day)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         SQL);
     }

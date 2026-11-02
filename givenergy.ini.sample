@@ -20,6 +20,10 @@ db_name = "solar"
 db_user = "solar_user"
 db_pass = "your_database_password_here"
 
+# Shelly Cloud (optional; Shelly app: User settings, Authorization cloud key)
+shelly_server = "https://shelly-XX-eu.shelly.cloud"
+shelly_auth_key = "your_shelly_cloud_key_here"
+
 # API settings
 request_delay_ms = 300
 max_retries = 5
