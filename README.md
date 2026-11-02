@@ -92,7 +92,8 @@ php weather_import.php --config=/path/to/givenergy.ini [--from=2023-01-01]
 
 Daily mean outside temperature from the Open-Meteo archive (free, no key) for `WEATHER_LATITUDE` and
 `WEATHER_LONGITUDE` (a town is close enough), into `weather_daily`, for degree days: each day's mean below 15.5C,
-added up, so heating in different winters compares fairly.
+added up, so heating in different winters compares fairly. Open-Meteo's free API is for non-commercial use (600
+calls a minute, 10,000 a day; this makes one a night) and its data is CC BY 4.0: the report credits it.
 
 ## Battery report
 

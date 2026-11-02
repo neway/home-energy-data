@@ -49,24 +49,19 @@ final class Billing
         return $months;
     }
 
-    /** Every EDF bill line, newest first, with GivEnergy's import and export over the same days. */
+    /** Every EDF bill line, newest bill first, with its bill's date and credits, and GivEnergy's import and export over the same days. */
     public function charges(): array
     {
         return $this->pdo->query(<<<SQL
-            SELECT c.*,
+            SELECT c.*, b.bill_date, b.credits_gbp,
                    SUM(g.grid_import_energy_kwh) AS givenergy_import,
                    SUM(g.grid_export_energy_kwh) AS givenergy_export
             FROM edf_charges c
+            JOIN edf_bills b ON b.bill_ref = c.bill_ref
             LEFT JOIN givenergy_daily_summary g ON g.summary_date BETWEEN c.period_from AND c.period_to
             GROUP BY c.bill_ref, c.supply, c.period_from
-            ORDER BY c.period_from DESC, FIELD(c.supply, 'import', 'export', 'gas')
+            ORDER BY b.bill_date DESC, c.period_from DESC
             SQL)->fetchAll();
-    }
-
-    /** All bills' credits (loyalty, smart charging...), including VAT: negative. */
-    public function creditsTotal(): float
-    {
-        return (float)$this->pdo->query('SELECT SUM(credits_gbp) FROM edf_bills')->fetchColumn();
     }
 
     /**

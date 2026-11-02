@@ -72,7 +72,7 @@ function main(array $argv): void {
         conclusionSection($year, sumMonths($car), $billing->gasYear($yearFrom, $end, GAS_KWH_PER_M3), $billing->latestRates(),
             $axleYear),
         carSection($car),
-        billsSection($billing->charges(), $billing->creditsTotal()),
+        billsSection($billing->charges()),
         axleSection($axle, $axleYear),
         usageSection(new ShellyData($pdo), $windows, $end, sumMonths($inverter)['home'],
             sumMonths($economics->inverterTotals(...$windows['30 days']))['home']),
@@ -175,48 +175,50 @@ function carRow(string $label, array $c): array {
         (int)$c['car_days'], gbp($c['car'] * OFF_PEAK_P / 100)];
 }
 
-function billsSection(array $charges, float $credits): array {
-    $rows = [];
-    $totals = [];
+function billsSection(array $charges): array {
+    $bills = [];
     foreach ($charges as $c) {
-        $period = date('j M', strtotime($c['period_from'])) . ' - ' . date('j M Y', strtotime($c['period_to']));
-        $kwh = (float)$c['kwh'];
-        [$givenergy, $check] = match ($c['supply']) {
-            'import' => [(float)$c['givenergy_import'], 'car ' . kwh($kwh - $c['givenergy_import'])],
-            'export' => [(float)$c['givenergy_export'], billedShare($kwh, (float)$c['givenergy_export'])],
-            'gas' => [null, sprintf('%.1f m3, CV %.1f', $c['m3'], $c['calorific_value'])],
-        };
-        $rows[] = [$period, $c['supply'], $c['tariff'], kwh($kwh), $c['peak_kwh'] === null ? '' : kwh((float)$c['peak_kwh']),
-            gbp((float)$c['energy_gbp'], 2), sprintf('%d x %.2fp', $c['standing_days'], $c['standing_p_per_day']),
-            gbp((float)$c['standing_gbp'], 2), gbp((float)$c['vat_gbp'], 2), gbp((float)$c['total_gbp'], 2),
-            $givenergy === null ? '' : kwh($givenergy), $check];
-        $t = &$totals[$c['supply']];
-        $t ??= array_fill_keys(['kwh', 'energy', 'standing', 'vat', 'total'], 0.0);
-        $t['kwh'] += $kwh;
-        $t['energy'] += $c['energy_gbp'];
-        $t['standing'] += $c['standing_gbp'];
-        $t['vat'] += $c['vat_gbp'];
-        $t['total'] += $c['total_gbp'];
-        unset($t);
+        $b = &$bills[$c['bill_ref']];
+        $b ??= ['date' => $c['bill_date'], 'from' => $c['period_from'], 'to' => $c['period_to'], 'credits' => (float)$c['credits_gbp']]
+            + array_fill_keys(['import', 'peak', 'givenergy_import', 'export', 'givenergy_export', 'gas', 'standing', 'total'], 0.0);
+        $b['from'] = min($b['from'], $c['period_from']);
+        $b['to'] = max($b['to'], $c['period_to']);
+        $b[$c['supply']] += $c['kwh'];
+        $b['peak'] += $c['peak_kwh'] ?? 0;
+        $b['givenergy_' . $c['supply']] = ($b['givenergy_' . $c['supply']] ?? 0) + ($c['supply'] === 'gas' ? 0 : $c["givenergy_{$c['supply']}"]);
+        $b['standing'] += $c['standing_gbp'];
+        $b['total'] += $c['total_gbp'];
+        unset($b);
     }
-    foreach ($totals as $supply => $t) {
-        $rows[] = ["All bills: $supply", '', '', kwh($t['kwh']), '', gbp($t['energy'], 2), '', gbp($t['standing'], 2),
-            gbp($t['vat'], 2), gbp($t['total'], 2), '', ''];
+    $rows = [];
+    $sum = array_fill_keys(['import', 'peak', 'car', 'export', 'gas', 'standing', 'credits', 'net'], 0.0);
+    foreach ($bills as $b) {
+        $car = $b['import'] ? $b['import'] - $b['givenergy_import'] : 0;
+        $net = $b['total'] + $b['credits'];
+        foreach (['import', 'peak', 'export', 'gas', 'standing', 'credits'] as $k) {
+            $sum[$k] += $b[$k];
+        }
+        [$sum['car'], $sum['net']] = [$sum['car'] + $car, $sum['net'] + $net];
+        $rows[] = [date('j M Y', strtotime($b['date'])), date('j M', strtotime($b['from'])) . ' - ' . date('j M', strtotime($b['to'])),
+            $b['import'] ? kwh($b['import']) : '', $b['import'] ? kwh($b['peak']) : '', $b['import'] ? kwh($car) : '',
+            $b['export'] ? kwh($b['export']) : '', $b['export'] ? billedShare($b['export'], $b['givenergy_export']) : '',
+            $b['gas'] ? kwh($b['gas']) : '', gbp($b['standing'], 2), gbp($b['credits'], 2), gbp($net, 2)];
     }
-    $rows[] = ['All bills: credits', '', 'loyalty, smart charging...', '', '', '', '', '', '', gbp($credits, 2), '', ''];
-    $rows[] = ['All bills: net', '', '', '', '', '', '', gbp(array_sum(array_column($totals, 'standing')), 2), '',
-        gbp(array_sum(array_column($totals, 'total')) + $credits, 2), '', ''];
+    if ($bills) {
+        $rows[] = ['All bills', '', kwh($sum['import']), kwh($sum['peak']), kwh($sum['car']), kwh($sum['export']), '',
+            kwh($sum['gas']), gbp($sum['standing'], 2), gbp($sum['credits'], 2), gbp($sum['net'], 2)];
+    }
 
     return [
         'title' => 'EDF bills against GivEnergy',
-        'text' => ['Each bill line as billed (units and standing charge before VAT), newest first, against GivEnergy\'s '
-            . 'own counters for the same days. Import: the difference is the car. Export: what EDF credited as a share '
-            . 'of what GivEnergy sent out; green within 5%. Gas: the m3 and calorific value EDF converted from.'],
-        'head' => ['Period', 'Supply', 'Tariff', 'kWh', 'At peak', 'Units', 'Standing days x rate', 'Standing', 'VAT', 'Total', 'GivEnergy',
-            'Check'],
-        'rows' => $rows ?: [['no bills imported (edf_import.php)', '', '', '', '', '', '', '', '', '', '', '']],
-        'notes' => ['An export line far from GivEnergy usually runs from an older opening reading (e.g. the first bill '
-            . 'after a switch). A line for part of a switch day won\'t match GivEnergy\'s whole day.'],
+        'text' => ['One row per bill, newest first: kWh billed, and what was paid (with VAT, after credits). Car: '
+            . 'billed import less GivEnergy\'s for the same days. Export: EDF\'s kWh as a share of GivEnergy\'s; green '
+            . 'within 5%.'],
+        'head' => ['Bill', 'Covers', 'Import kWh', 'At peak', 'Car', 'Export kWh', 'Of GivEnergy', 'Gas kWh', 'Standing',
+            'Credits', 'Net'],
+        'rows' => $rows ?: [['no bills imported (edf_import.php)', '', '', '', '', '', '', '', '', '', '']],
+        'notes' => ['Covers: the earliest to the latest day on the bill; its lines can cover different days. An export '
+            . 'far from GivEnergy usually runs from an older opening reading (e.g. the first bill after a switch).'],
     ];
 }
 
@@ -416,7 +418,8 @@ function officeHeatingSections(ShellyData $shelly, array $weather, string $from,
         'head' => ['Winter', 'Heating', 'kWh', 'Degree days', 'kWh per 100 degree days', 'At peak', 'Cost at grid rates',
             'Saved kWh', 'Saved'],
         'rows' => $rows ?: [['no complete winter yet', '', '', '', '', '', '', '', '']],
-        'notes' => ['Cost at grid rates: peak hours at the peak rate, though the battery covers most of them.'],
+        'notes' => ['Cost at grid rates: peak hours at the peak rate, though the battery covers most of them. '
+            . 'Weather data by Open-Meteo.com (CC BY 4.0).'],
     ], [
         'title' => 'Office heat pump, month by month',
         'head' => ['Month', 'kWh', 'Degree days', 'kWh per 100 degree days', 'At peak', 'Cost at grid rates',
@@ -428,7 +431,7 @@ function officeHeatingSections(ShellyData $shelly, array $weather, string $from,
 /** What EDF billed as a share of what GivEnergy measured: green within 5%. */
 function billedShare(float $billed, float $measured): array {
     $share = $billed / max($measured, 1e-9);
-    return rag(pct($share) . ' of GivEnergy', abs($share - 1) <= 0.05 ? 'green' : 'amber');
+    return rag(pct($share), abs($share - 1) <= 0.05 ? 'green' : 'amber');
 }
 
 function capacitySection(BatteryCapacity $capacity, array $windows, string $end): array {
@@ -722,36 +725,35 @@ function renderText(string $title, string $intro, array $sections): string {
 
 function renderHtml(string $title, string $intro, array $sections): string {
     $e = fn ($v) => htmlspecialchars(cellText($v), ENT_QUOTES);
-    $cell = 'border:1px solid #ccc;padding:4px 8px;';
-    $background = ['green' => '#d4edda', 'amber' => '#fff3cd', 'red' => '#f8d7da'];
-    $out = '<!doctype html><html><head><meta charset="utf-8"><title>' . $e($title) . '</title></head>'
-        . '<body style="font-family:Arial,sans-serif;font-size:14px;color:#222">'
-        . '<h2 style="margin:0 0 4px">' . $e($title) . '</h2><p style="color:#555">' . $e($intro) . '</p>';
+    // One style block, not a style on every cell: Gmail clips an email over about 102 KB.
+    $out = '<!doctype html><html><head><meta charset="utf-8"><title>' . $e($title) . '</title><style>'
+        . 'body{font-family:Arial,sans-serif;font-size:14px;color:#222}h2{margin:0 0 4px}h3{margin:24px 0 4px}'
+        . 'p{margin:0 0 8px;color:#555}p.n{margin:4px 0;font-size:12px}table{border-collapse:collapse}'
+        . 'th,td{border:1px solid #ccc;padding:4px 8px;text-align:right;white-space:pre}th{background:#f2f2f2}'
+        . 'th:first-child,td:first-child{text-align:left}tr.t td{font-weight:bold}'
+        . '.green{background:#d4edda}.amber{background:#fff3cd}.red{background:#f8d7da}'
+        . '</style></head><body><h2>' . $e($title) . '</h2><p>' . $e($intro) . '</p>';
     foreach ($sections as $s) {
-        $out .= '<h3 style="margin:24px 0 4px">' . $e($s['title']) . '</h3>';
+        $out .= '<h3>' . $e($s['title']) . '</h3>';
         foreach ($s['text'] ?? [] as $line) {
-            $out .= '<p style="margin:0 0 8px;color:#555">' . $e($line) . '</p>';
+            $out .= '<p>' . $e($line) . '</p>';
         }
-        $out .= '<table style="border-collapse:collapse"><tr>';
-        foreach ($s['head'] as $c => $h) {
-            $out .= '<th style="' . $cell . 'background:#f2f2f2;text-align:' . ($c === 0 ? 'left' : 'right') . '">'
-                . $e($h) . '</th>';
+        $out .= '<table><tr>';
+        foreach ($s['head'] as $h) {
+            $out .= '<th>' . $e($h) . '</th>';
         }
         $out .= '</tr>';
         $last = count($s['rows']) - 1;
         foreach ($s['rows'] as $r => $row) {
-            $bold = $r === $last && in_array($row[0], ['12 months', 'Verdict'], true) ? 'font-weight:bold;' : '';
-            $out .= '<tr>';
-            foreach (array_values($row) as $c => $v) {
-                $colour = is_array($v) ? 'background:' . $background[$v['rag']] . ';' : '';
-                $out .= '<td style="' . $cell . $bold . $colour . 'text-align:' . ($c === 0 ? 'left' : 'right')
-                    . ';white-space:pre">' . $e($v) . '</td>';
+            $out .= $r === $last && in_array($row[0], ['12 months', 'Verdict'], true) ? '<tr class="t">' : '<tr>';
+            foreach ($row as $v) {
+                $out .= (is_array($v) ? '<td class="' . $v['rag'] . '">' : '<td>') . $e($v) . '</td>';
             }
             $out .= '</tr>';
         }
         $out .= '</table>';
         foreach ($s['notes'] ?? [] as $line) {
-            $out .= '<p style="margin:4px 0;color:#555;font-size:12px">' . $e($line) . '</p>';
+            $out .= '<p class="n">' . $e($line) . '</p>';
         }
     }
     return $out . '</body></html>';
