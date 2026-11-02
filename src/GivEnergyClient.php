@@ -198,7 +198,7 @@ final class GivEnergyClient
             'Authorization: Bearer ' . $this->apiKey,
             'Accept: application/json',
             'Content-Type: application/json',
-            'User-Agent: Wayne-GivEnergy-Backfill/1.0',
+            'User-Agent: home-energy-toolset/1.0',
         ];
     }
 

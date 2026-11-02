@@ -52,3 +52,7 @@ Thumbs.db
 #Pwd sensitive
 givenergy.ini
 .idea/*
+
+# Personal data lives in ../home_energy_private, never here
+edf_bills/
+*.pdf

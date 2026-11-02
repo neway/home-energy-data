@@ -10,11 +10,6 @@ declare(strict_types=1);
  *   php givenergy_import.php --config=/path/to/givenergy.ini --from=2023-01-01 --to=2026-04-13
  *   php givenergy_import.php --config=/path/to/givenergy.ini --date=2023-07-27
  *   php givenergy_import.php --config=/path/to/givenergy.ini --auto-catchup
- *   28th July 2023 - Octopus account opened.
- *   Octopus API goes back to April 2024 - so YoY compare...
- *   MyEnergi only gives 12 months worth of data
- *  
- *
  *
  * INI format:
  *   api_key = "..."
@@ -38,6 +33,7 @@ const TABLE_OCTOPUS_CONSUMPTION = 'octopus_consumption';
 const TABLE_OCTOPUS_DAILY_SUMMARY = 'octopus_daily_summary';
 const DEFAULT_TIMEZONE = 'Europe/London';
 
+require_once __DIR__ . '/src/Database.php';
 require_once __DIR__ . '/src/SchemaManager.php';
 require_once __DIR__ . '/src/DataNormaliser.php';
 require_once __DIR__ . '/src/DataImporter.php';
@@ -111,40 +107,12 @@ function loadSettings(array $opts): array
         'octopus_gas_mprn' => $config['octopus_gas_mprn'] ?? null,
         'octopus_gas_serial' => $config['octopus_gas_serial'] ?? null,
 
-        // Database settings
-        'db_host' => $opts['db-host'] ?? ($config['db_host'] ?? '127.0.0.1'),
-        'db_port' => (int)($opts['db-port'] ?? ($config['db_port'] ?? 3306)),
-        'db_name' => $opts['db-name'] ?? ($config['db_name'] ?? null),
-        'db_user' => $opts['db-user'] ?? ($config['db_user'] ?? null),
-        'db_pass' => $opts['db-pass'] ?? ($config['db_pass'] ?? null),
+        ...loadDbSettings($opts, $config),
         'request_delay_ms' => (int)($opts['request-delay-ms'] ?? ($config['request_delay_ms'] ?? 300)),
         'max_retries' => (int)($opts['max-retries'] ?? ($config['max_retries'] ?? 5)),
     ];
 
-    validateRequiredSettings($settings, ['db_name', 'db_user', 'db_pass']);
-
     return $settings;
-}
-
-function loadConfigFile(array $opts): array {
-    if (empty($opts['config'])) {
-        return [];
-    }
-
-    $config = parse_ini_file((string)$opts['config'], false, INI_SCANNER_TYPED);
-    if ($config === false) {
-        throw new RuntimeException('Unable to parse config file: ' . $opts['config']);
-    }
-
-    return $config;
-}
-
-function validateRequiredSettings(array $settings, array $required): void {
-    foreach ($required as $key) {
-        if (empty($settings[$key])) {
-            throw new InvalidArgumentException("Missing required setting: {$key}");
-        }
-    }
 }
 
 function handleRebuildSummary(PDO $pdo, array $settings): void {
@@ -418,24 +386,6 @@ Options:
 Note: Both datapoints and hourly energy flows are imported automatically for the date range.
 TXT;
     fwrite(STDOUT, $text . PHP_EOL);
-}
-
-function connectPdo(array $settings): PDO {
-    $dsn = sprintf(
-        'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
-        $settings['db_host'],
-        $settings['db_port'],
-        $settings['db_name']
-    );
-
-    $pdo = new PDO($dsn, $settings['db_user'], $settings['db_pass'], [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ]);
-
-    $pdo->exec("SET time_zone = '+00:00'");
-    return $pdo;
 }
 
 function iterateDays(DateTimeImmutable $from, DateTimeImmutable $to): Generator {

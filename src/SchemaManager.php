@@ -14,6 +14,7 @@ final class SchemaManager
         $this->createEnergyFlowsTable();
         $this->createOctopusConsumptionTable();
         $this->createOctopusDailySummaryTable();
+        $this->createEdfTables();
     }
     private function createDatapointsTable(): void
     {
@@ -188,6 +189,81 @@ final class SchemaManager
             UNIQUE KEY uq_meter_date (mpan_mprn, meter_serial, fuel_type, summary_date),
             KEY idx_summary_date (summary_date),
             KEY idx_fuel_date (fuel_type, summary_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+    }
+
+    // EDF bills (edf_import.php): one row per bill, per fuel and tariff period on it, per credit, and per import
+    // half-hour. Money in pounds as printed; the half-hours' cost in pence, as printed.
+    private function createEdfTables(): void
+    {
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS edf_bills (
+            bill_ref VARCHAR(16) NOT NULL,
+            bill_date DATE NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            balance_before_gbp DECIMAL(10,2) NOT NULL COMMENT 'credit positive',
+            balance_after_gbp DECIMAL(10,2) NOT NULL COMMENT 'credit positive',
+            payments_gbp DECIMAL(10,2) NOT NULL,
+            credits_gbp DECIMAL(10,2) NOT NULL COMMENT 'including VAT, negative',
+            imported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bill_ref)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS edf_charges (
+            bill_ref VARCHAR(16) NOT NULL,
+            supply ENUM('import', 'export', 'gas') NOT NULL,
+            period_from DATE NOT NULL,
+            period_to DATE NOT NULL,
+            tariff VARCHAR(64) NOT NULL,
+            meter VARCHAR(32) NOT NULL,
+            read_from DECIMAL(12,4) NULL,
+            read_to DECIMAL(12,4) NULL,
+            m3 DECIMAL(10,4) NULL,
+            calorific_value DECIMAL(4,1) NULL,
+            kwh DECIMAL(10,4) NOT NULL,
+            unit_rate_p DECIMAL(7,3) NULL COMMENT 'single-rate tariffs',
+            off_peak_kwh DECIMAL(10,4) NULL COMMENT 'two-rate tariffs: the cheaper rate',
+            off_peak_p DECIMAL(7,3) NULL,
+            peak_kwh DECIMAL(10,4) NULL,
+            peak_p DECIMAL(7,3) NULL,
+            energy_gbp DECIMAL(10,2) NOT NULL COMMENT 'export negative',
+            standing_days INT NOT NULL,
+            standing_p_per_day DECIMAL(7,3) NOT NULL,
+            standing_gbp DECIMAL(10,2) NOT NULL,
+            vat_pct DECIMAL(4,1) NOT NULL,
+            vat_gbp DECIMAL(10,2) NOT NULL,
+            total_gbp DECIMAL(10,2) NOT NULL,
+            PRIMARY KEY (bill_ref, supply, period_from),
+            KEY idx_supply_period (supply, period_from)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS edf_credits (
+            bill_ref VARCHAR(16) NOT NULL,
+            line_no TINYINT UNSIGNED NOT NULL,
+            credit_date DATE NOT NULL,
+            description VARCHAR(128) NOT NULL,
+            gbp DECIMAL(10,2) NOT NULL COMMENT 'before VAT, negative',
+            PRIMARY KEY (bill_ref, line_no)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        SQL);
+
+        $this->pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS edf_halfhours (
+            start_utc DATETIME NOT NULL,
+            local_date DATE NOT NULL,
+            slot TINYINT UNSIGNED NOT NULL COMMENT '0 = from local midnight; 46 or 50 a day when the clocks change',
+            rate_p DECIMAL(7,3) NOT NULL,
+            kwh DECIMAL(8,4) NOT NULL,
+            cost_p DECIMAL(9,3) NOT NULL,
+            bill_ref VARCHAR(16) NOT NULL,
+            PRIMARY KEY (start_utc),
+            KEY idx_local_date (local_date),
+            KEY idx_bill (bill_ref)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         SQL);
     }
