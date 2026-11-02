@@ -46,12 +46,12 @@ The importer creates its tables on first run.
 
 ```
 cd home_energy_toolset
-cp givenergy.ini.sample givenergy.ini
-chmod 600 givenergy.ini
+cp givenergy.ini.sample ../home_energy_private/givenergy.ini
+chmod 600 ../home_energy_private/givenergy.ini
 ```
 
 Fill in the database login, your GivEnergy API key (GivEnergy portal, Account Settings, API tokens) and inverter
-serial, and, if you're with Octopus, your Octopus API key and meter numbers. `givenergy.ini` is gitignored.
+serial, and, if you're with Octopus, your Octopus API key and meter numbers. Never commit it: it holds your keys and passwords (the private repo's `.gitignore` excludes `*.ini`).
 
 ## 5. First import
 
@@ -59,7 +59,7 @@ GivEnergy keeps your full history, so load it from the day the system was commis
 call per day, with `request_delay_ms` between calls):
 
 ```
-php givenergy_import.php --config=givenergy.ini --from=<commissioning date> --to=<yesterday>
+php givenergy_import.php --config=../home_energy_private/givenergy.ini --from=<commissioning date> --to=<yesterday>
 ```
 
 Check it worked:
@@ -73,15 +73,15 @@ mysql solar -e "SELECT MIN(sample_date), MAX(sample_date), COUNT(*) FROM givener
 `--auto-catchup` imports every day since the last one imported. Then run the report:
 
 ```
-php givenergy_import.php --config=givenergy.ini --auto-catchup
-php battery_report.php --config=givenergy.ini           # text
-php battery_report.php --config=givenergy.ini --html    # HTML, e.g. to email
+php givenergy_import.php --config=../home_energy_private/givenergy.ini --auto-catchup
+php battery_report.php --config=../home_energy_private/givenergy.ini           # text
+php battery_report.php --config=../home_energy_private/givenergy.ini --html    # HTML, e.g. to email
 ```
 
 A crontab line, at 04:00 so yesterday is complete (adjust the paths):
 
 ```
-0 4 * * * cd /path/to/home_energy_project/home_energy_toolset && php givenergy_import.php --config=givenergy.ini --auto-catchup >> /var/log/givenergy_import.log 2>&1
+0 4 * * * cd /path/to/home_energy_project/home_energy_toolset && php givenergy_import.php --config=../home_energy_private/givenergy.ini --auto-catchup >> /var/log/givenergy_import.log 2>&1
 ```
 
 ## 7. EDF bills (optional)
@@ -89,7 +89,7 @@ A crontab line, at 04:00 so yesterday is complete (adjust the paths):
 Download each bill PDF from EDF's MyAccount into `../home_energy_private/edf_bills/`, then:
 
 ```
-php edf_import.php --config=givenergy.ini
+php edf_import.php --config=../home_energy_private/givenergy.ini
 ```
 
 It loads every PDF there into the `edf_*` tables and is safe to re-run. A bill whose figures don't add up (lines to
