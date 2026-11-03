@@ -28,6 +28,8 @@ require_once __DIR__ . '/src/ShellyClient.php';
 // Device models by what they measure (the app's device type). Anything else (e.g. the i4 input) is skipped.
 const SHELLY_POWER_MODELS = '/^(SNSW-|SNPL-|S3PM-|S3SW-|SHSW-PM|SHDM-)/';
 const SHELLY_SENSOR_MODELS = '/^(SHHT-|SNSN-0013A|SBHT-)/';
+// Any device time before this is a clock that hasn't synced.
+const SHELLY_EARLIEST_TIME = 1577836800; // 2020-01-01
 
 main();
 
@@ -152,7 +154,10 @@ function poll(PDO $pdo, array $status, array $devices): void {
                 $minutes++;
             }
         } elseif ($d['kind'] === 'sensor') {
-            $at = $s['ts'] ?? $s['sys']['unixtime'] ?? $s['unixtime'] ?? (isset($s['_updated']) ? strtotime($s['_updated'] . ' UTC') : null);
+            // The device's own clock where it has one; a Gen1 sensor between wakes can report 0, so then the cloud's time.
+            $clocks = [$s['ts'] ?? null, $s['sys']['unixtime'] ?? null, $s['unixtime'] ?? null,
+                isset($s['_updated']) ? strtotime($s['_updated'] . ' UTC') : null];
+            $at = current(array_filter($clocks, fn($t) => $t > SHELLY_EARLIEST_TIME)) ?: null;
             if ($at === null) {
                 continue;
             }
