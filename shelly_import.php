@@ -12,8 +12,9 @@ declare(strict_types=1);
  *       Live status of every device (one request): each power meter's energy for each of the last three minutes,
  *       and each sensor's latest reading. Run every 2 minutes to keep every minute.
  *   php shelly_import.php --config=... --auto-catchup [--from=2024-06-01]
- *       The cloud's hourly history, one request per device per day: from each device's last imported day (or
- *       --from, else yesterday, for a device with none) to yesterday. The first run with --from is the backfill.
+ *       The cloud's hourly history, one request per device per day, to yesterday: from each device's last imported
+ *       day (yesterday for a new device). With --from, every day since then that isn't imported yet (and the last
+ *       imported day again, which may be partial): the backfill, safe to stop and run again.
  *   php shelly_import.php --config=... --from=2026-10-01 --to=2026-10-31
  *       The hourly history for those days, for every device.
  *   --device=id[,id...] limits any of these to those devices.
@@ -64,12 +65,18 @@ function main(): void {
         if ($d['kind'] === 'other') {
             continue;
         }
-        $start = isset($opts['auto-catchup']) ? (lastImportedDay($pdo, $d) ?? $from ?? $yesterday) : $from;
-        $rows = 0;
+        $last = lastImportedDay($pdo, $d);
+        $start = $from ?? $last ?? $yesterday;
+        $have = isset($opts['auto-catchup']) && $from !== null ? importedDays($pdo, $d) : [];
+        [$rows, $days] = [0, 0];
         for ($day = $start; $day <= $to; $day = date('Y-m-d', strtotime("$day +1 day"))) {
+            if (isset($have[$day]) && $day !== $last) {
+                continue;
+            }
             $rows += importDay($pdo, $shelly, $d, $day);
+            $days++;
         }
-        printf("%-28s %s..%s: %d hours\n", $d['name'], $start, $to, $rows);
+        printf("%-28s %s..%s: %d days fetched, %d hours\n", $d['name'], $start, $to, $days, $rows);
     }
 }
 
@@ -90,6 +97,14 @@ function saveDevices(PDO $pdo, array $devices): array {
         }
     }
     return $devices;
+}
+
+/** Days already imported for a device (at least half the day's hours), as keys. */
+function importedDays(PDO $pdo, array $d): array {
+    $stmt = $pdo->prepare('SELECT DATE(hour_utc) FROM shelly_hourly WHERE device_id = ? AND channel = ?
+        GROUP BY DATE(hour_utc) HAVING COUNT(*) >= 12');
+    $stmt->execute([$d['id'], $d['channel']]);
+    return array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
 }
 
 function lastImportedDay(PDO $pdo, array $d): ?string {
