@@ -28,8 +28,9 @@ require_once __DIR__ . '/src/Database.php';
 require_once __DIR__ . '/src/SchemaManager.php';
 require_once __DIR__ . '/src/ShellyClient.php';
 
-// Device models by what they measure (the app's device type). Anything else (e.g. the i4 input) is skipped.
-const SHELLY_POWER_MODELS = '/^(SNSW-|SNPL-|S3PM-|S3SW-|SHSW-PM|SHDM-)/';
+// Device models by what they measure (the app's device type). Anything else (e.g. the i4 input, or a Plus 1 relay,
+// SNSW-001X, which has no meter) is skipped.
+const SHELLY_POWER_MODELS = '/^(SNSW-\d{3}P|SNPL-|S3PM-|S3SW-|SHSW-PM|SHDM-)/';
 const SHELLY_SENSOR_MODELS = '/^(SHHT-|SNSN-0013A|SBHT-)/';
 // Any device time before this is a clock that hasn't synced.
 const SHELLY_EARLIEST_TIME = 1577836800; // 2020-01-01
