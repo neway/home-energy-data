@@ -16,6 +16,7 @@ final class ShellyData
     private const RH_LIMIT = 70.0;
 
     private DateTimeZone $uk;
+    private ?array $names = null;
 
     public function __construct(private PDO $pdo)
     {
@@ -191,8 +192,47 @@ final class ShellyData
         return array_map(fn($ts) => array_sum($ts) / count($ts), $sums);
     }
 
-    /** [key, name, hour_utc, wh] for every power meter (or one meter), UK days $from to $to. */
+    /**
+     * [key, name, hour_utc, wh] for every power meter (or one meter), UK days $from to $to. For every meter, a meter
+     * with others plugged in behind it (SHELLY_METERED_INSIDE) has their use taken off, and says so in its name.
+     */
     private function powerHours(string $from, string $to, ?string $device = null, int $channel = 0): Generator
+    {
+        if ($device === null) {
+            $hour = [];
+            foreach ($this->meterHours($from, $to, null, 0) as $row) {
+                if ($hour && $hour[array_key_first($hour)][2] !== $row[2]) {
+                    yield from $this->lessInner($hour);
+                    $hour = [];
+                }
+                $hour[$row[0]] = $row;
+            }
+            yield from $this->lessInner($hour);
+            return;
+        }
+        yield from $this->meterHours($from, $to, $device, $channel);
+    }
+
+    /** One hour's meter rows (by key), each outer meter less what its inner meters used that hour. */
+    private function lessInner(array $hour): array
+    {
+        foreach (SHELLY_METERED_INSIDE as $inner => $outer) {
+            if (isset($hour["{$outer}_0"])) {
+                $hour["{$outer}_0"][1] .= ', less ' . ($this->names()["{$inner}_0"] ?? $inner);
+                $hour["{$outer}_0"][3] = max(0.0, $hour["{$outer}_0"][3] - ($hour["{$inner}_0"][3] ?? 0.0));
+            }
+        }
+        return array_values($hour);
+    }
+
+    /** Power meters' names by key. */
+    private function names(): array
+    {
+        return $this->names ??= $this->pdo->query("SELECT CONCAT(device_id, '_', channel), name FROM shelly_devices")
+            ->fetchAll(PDO::FETCH_KEY_PAIR);
+    }
+
+    private function meterHours(string $from, string $to, ?string $device, int $channel): Generator
     {
         [$a, $b] = $this->utcRange($from, $to);
         $stmt = $this->pdo->prepare(<<<SQL

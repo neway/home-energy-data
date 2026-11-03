@@ -105,7 +105,8 @@ shelly_server = "https://shelly-XX-eu.shelly.cloud"
 shelly_auth_key = "..."
 ```
 
-Then backfill once (slow: about one request a second), poll every 2 minutes, and load the weather:
+Then backfill once (slow: about one request a second), poll every 2 minutes (only the devices in
+`SHELLY_POLL_DEVICES`), and load the weather:
 
 ```
 php shelly_import.php --config=../home_energy_private/givenergy.ini --auto-catchup --from=2025-01-01

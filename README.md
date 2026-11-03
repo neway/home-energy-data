@@ -62,13 +62,14 @@ battery %), and the 12 months' payouts in the conclusion.
 ## Shelly devices
 
 ```
-php shelly_import.php --config=/path/to/givenergy.ini --poll                            # every 2 minutes
+php shelly_import.php --config=/path/to/givenergy.ini --poll                            # every 2 minutes: SHELLY_POLL_DEVICES
 php shelly_import.php --config=/path/to/givenergy.ini --auto-catchup [--from=2024-06-01] # nightly; --from backfills
 ```
 
 Reads every device on a Shelly Cloud account (`shelly_server` and `shelly_auth_key` in the ini: Shelly app, User
 settings, Authorization cloud key). The cloud allows about one request a second, so a backfill takes a while (one
-request per device per day).
+request per device per day). Polling records only the devices under study (`SHELLY_POLL_DEVICES` in
+`../home_energy_private/config.php`): minute data for every device would add the best part of 1 GB a year.
 
 | Table | What |
 |---|---|

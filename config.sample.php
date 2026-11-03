@@ -49,6 +49,14 @@ const MCS_ESTIMATE_KWH = 4000.0;
 const SHELLY_OUTSIDE_SENSOR = '';
 const SHELLY_GARAGE_SENSOR = '';
 const SHELLY_GARAGE_DEHUMIDIFIER = '';
+// The devices shelly_import.php --poll records (minutes of power, every sensor reading), by hardware id: those under
+// study. The rest have the cloud's hourly history only.
+const SHELLY_POLL_DEVICES = [];
+// Meters plugged in behind another meter: [inner => outer], channel 0. The report takes the inner's use off the
+// outer's, so it isn't counted twice.
+const SHELLY_METERED_INSIDE = [
+    // 'inner plug id' => 'outer plug id',
+];
 
 // Changes to the house, marked against their month in the report: [date, what].
 const HOME_CHANGES = [

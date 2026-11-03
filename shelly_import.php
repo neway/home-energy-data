@@ -9,8 +9,9 @@ declare(strict_types=1);
  *
  * Usage:
  *   php shelly_import.php --config=... --poll
- *       Live status of every device (one request): each power meter's energy for each of the last three minutes,
- *       and each sensor's latest reading. Run every 2 minutes to keep every minute.
+ *       Live status (one request) of the devices in SHELLY_POLL_DEVICES (../home_energy_private/config.php): each
+ *       power meter's energy for each of the last three minutes, and each sensor's latest reading. Run every 2
+ *       minutes to keep every minute.
  *   php shelly_import.php --config=... --auto-catchup [--from=2024-06-01]
  *       The cloud's hourly history, one request per device per day, to yesterday: from each device's last imported
  *       day (yesterday for a new device). With --from, every day since then that isn't imported yet (and the last
@@ -22,6 +23,7 @@ declare(strict_types=1);
  * Data is keyed on the device's hardware id and channel; shelly_device_names keeps each name a device has had.
  */
 
+require_once __DIR__ . '/../home_energy_private/config.php';
 require_once __DIR__ . '/src/Database.php';
 require_once __DIR__ . '/src/SchemaManager.php';
 require_once __DIR__ . '/src/ShellyClient.php';
@@ -50,7 +52,7 @@ function main(): void {
         $devices = array_values(array_filter($devices, fn($d) => in_array($d['id'], $only, true)));
     }
     if (isset($opts['poll'])) {
-        poll($pdo, $shelly->allStatus(), $devices);
+        poll($pdo, $shelly->allStatus(), array_filter($devices, fn($d) => in_array($d['id'], SHELLY_POLL_DEVICES, true)));
         return;
     }
 
